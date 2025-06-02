@@ -7,10 +7,26 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
-import { CalendarDays, Users, Share2, Copy, Check, ArrowLeft, X, Clock, UserPlus } from "lucide-react"
-import { addSignup, removeSignup } from "@/app/actions"
+import { CalendarDays, Users, Share2, Copy, Check, ArrowLeft, X, Clock, UserPlus, Trash2, MoreVertical } from "lucide-react"
+import { addSignup, removeSignup, deleteEvent } from "@/app/actions"
 import type { Event, Signup } from "@/lib/redis"
 import Link from "next/link"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 
 interface EventPageClientProps {
   event: Event
@@ -23,6 +39,8 @@ export function EventPageClient({ event: initialEvent }: EventPageClientProps) {
   const [removingNames, setRemovingNames] = useState<Set<string>>(new Set())
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState("")
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false)
 
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -85,6 +103,20 @@ export function EventPageClient({ event: initialEvent }: EventPageClientProps) {
     setTimeout(() => setCopied(false), 2000)
   }
 
+  const handleDeleteEvent = async () => {
+    setIsDeleting(true)
+    setError("")
+
+    try {
+      await deleteEvent(event.id)
+      // The deleteEvent action will redirect to /events, so we don't need to do anything else here
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete event")
+      setIsDeleting(false)
+      setShowDeleteDialog(false)
+    }
+  }
+
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleString("en-US", {
       weekday: "long",
@@ -129,7 +161,25 @@ export function EventPageClient({ event: initialEvent }: EventPageClientProps) {
           <CardHeader>
             <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
               <div className="flex-1">
-                <CardTitle className="text-xl sm:text-2xl mb-2">{event.title}</CardTitle>
+                <div className="flex items-start justify-between mb-2">
+                  <CardTitle className="text-xl sm:text-2xl">{event.title}</CardTitle>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="outline" size="sm" className="sm:hidden">
+                        <MoreVertical className="h-4 w-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem 
+                        onClick={() => setShowDeleteDialog(true)}
+                        className="text-red-600 focus:text-red-600 focus:bg-red-50"
+                      >
+                        <Trash2 className="h-4 w-4 mr-2" />
+                        Delete Event
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
                 <CardDescription className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4 text-sm sm:text-base">
                   <span className="flex items-center gap-1">
                     <CalendarDays className="h-4 w-4" />
@@ -146,13 +196,64 @@ export function EventPageClient({ event: initialEvent }: EventPageClientProps) {
                   </span>
                 </CardDescription>
               </div>
-              <Button variant="outline" size="sm" onClick={copyLink} className="self-start">
+              <div className="hidden sm:flex sm:flex-row gap-2">
+                <Button variant="outline" size="sm" onClick={copyLink}>
+                  {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                  <span className="ml-2">{copied ? "Copied!" : "Copy Link"}</span>
+                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm">
+                      <MoreVertical className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem 
+                      onClick={() => setShowDeleteDialog(true)}
+                      className="text-red-600 focus:text-red-600 focus:bg-red-50"
+                    >
+                      <Trash2 className="h-4 w-4 mr-2" />
+                      Delete Event
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            </div>
+            <div className="sm:hidden mt-4">
+              <Button variant="outline" size="sm" onClick={copyLink} className="w-full">
                 {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
                 <span className="ml-2">{copied ? "Copied!" : "Copy Link"}</span>
               </Button>
             </div>
           </CardHeader>
         </Card>
+
+        {/* Delete Confirmation Dialog */}
+        <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle className="flex items-center gap-2">
+                <Trash2 className="h-5 w-5 text-red-600" />
+                Delete Event?
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                This will permanently delete "{event.title}" and all {event.signups.length} signups. This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isDeleting}>
+                Cancel
+              </AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleDeleteEvent}
+                disabled={isDeleting}
+                className="bg-red-600 hover:bg-red-700"
+              >
+                {isDeleting ? "Deleting..." : "Delete Event"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         {/* Signup Form */}
         <Card className="shadow-lg mb-6">

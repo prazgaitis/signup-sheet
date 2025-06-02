@@ -104,3 +104,19 @@ export async function removeSignup(eventId: string, name: string) {
 
   return updatedEvent
 }
+
+export async function deleteEvent(eventId: string) {
+  const event = await getEvent(eventId)
+
+  if (!event) {
+    throw new Error("Event not found")
+  }
+
+  // Remove event from Redis
+  await redis.del(`event:${eventId}`)
+  
+  // Remove event ID from events set
+  await redis.srem("events", eventId)
+
+  redirect("/events")
+}

@@ -1,6 +1,6 @@
 "use server"
 
-import { redis, type Event } from "@/lib/redis"
+import { redis, type Event, type Signup } from "@/lib/redis"
 import { redirect } from "next/navigation"
 
 export async function createEvent(formData: FormData) {
@@ -60,18 +60,20 @@ export async function addSignup(eventId: string, name: string) {
     throw new Error("Event not found")
   }
 
-  if (event.signups.length >= event.maxSignups) {
-    throw new Error("Event is full")
+  if (event.signups.some(signup => signup.name === name.trim())) {
+    throw new Error("Name already signed up")
   }
 
-  if (event.signups.includes(name.trim())) {
-    throw new Error("Name already signed up")
+  // Create new signup with timestamp
+  const newSignup: Signup = {
+    name: name.trim(),
+    timestamp: new Date().toISOString()
   }
 
   // Add signup to event
   const updatedEvent = {
     ...event,
-    signups: [...event.signups, name.trim()],
+    signups: [...event.signups, newSignup],
   }
 
   // Update event in Redis
@@ -87,14 +89,14 @@ export async function removeSignup(eventId: string, name: string) {
     throw new Error("Event not found")
   }
 
-  if (!event.signups.includes(name.trim())) {
+  if (!event.signups.some(signup => signup.name === name.trim())) {
     throw new Error("Name not found in signup list")
   }
 
   // Remove signup from event
   const updatedEvent = {
     ...event,
-    signups: event.signups.filter(signup => signup !== name.trim()),
+    signups: event.signups.filter(signup => signup.name !== name.trim()),
   }
 
   // Update event in Redis

@@ -7,9 +7,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
-import { CalendarDays, Users, Share2, Copy, Check, ArrowLeft, X } from "lucide-react"
+import { CalendarDays, Users, Share2, Copy, Check, ArrowLeft, X, Clock, UserPlus } from "lucide-react"
 import { addSignup, removeSignup } from "@/app/actions"
-import type { Event } from "@/lib/redis"
+import type { Event, Signup } from "@/lib/redis"
 import Link from "next/link"
 
 interface EventPageClientProps {
@@ -36,9 +36,14 @@ export function EventPageClient({ event: initialEvent }: EventPageClientProps) {
       await addSignup(event.id, name.trim())
 
       // Update the local state after successful signup
+      const newSignup: Signup = {
+        name: name.trim(),
+        timestamp: new Date().toISOString()
+      }
+
       setEvent(prevEvent => ({
         ...prevEvent,
-        signups: [...prevEvent.signups, name.trim()],
+        signups: [...prevEvent.signups, newSignup],
       }))
 
       setName("")
@@ -60,7 +65,7 @@ export function EventPageClient({ event: initialEvent }: EventPageClientProps) {
       // Update the local state after successful removal
       setEvent(prevEvent => ({
         ...prevEvent,
-        signups: prevEvent.signups.filter(signup => signup !== nameToRemove),
+        signups: prevEvent.signups.filter(signup => signup.name !== nameToRemove),
       }))
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to remove signup")
@@ -91,8 +96,20 @@ export function EventPageClient({ event: initialEvent }: EventPageClientProps) {
     })
   }
 
-  const isFull = event.signups.length >= event.maxSignups
-  const spotsLeft = event.maxSignups - event.signups.length
+  const formatSignupTime = (timestamp: string) => {
+    return new Date(timestamp).toLocaleString("en-US", {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    })
+  }
+
+  // Split signups into confirmed and waitlisted
+  const confirmedSignups = event.signups.slice(0, event.maxSignups)
+  const waitlistedSignups = event.signups.slice(event.maxSignups)
+  const isFull = confirmedSignups.length >= event.maxSignups
+  const spotsLeft = event.maxSignups - confirmedSignups.length
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
@@ -120,7 +137,12 @@ export function EventPageClient({ event: initialEvent }: EventPageClientProps) {
                   </span>
                   <span className="flex items-center gap-1">
                     <Users className="h-4 w-4" />
-                    {event.signups.length}/{event.maxSignups} signed up
+                    {confirmedSignups.length}/{event.maxSignups} confirmed
+                    {waitlistedSignups.length > 0 && (
+                      <span className="text-amber-600">
+                        + {waitlistedSignups.length} waitlisted
+                      </span>
+                    )}
                   </span>
                 </CardDescription>
               </div>
@@ -133,74 +155,71 @@ export function EventPageClient({ event: initialEvent }: EventPageClientProps) {
         </Card>
 
         {/* Signup Form */}
-        {!isFull && (
-          <Card className="shadow-lg mb-6">
-            <CardHeader>
-              <CardTitle>Sign Up</CardTitle>
-              <CardDescription>
-                {spotsLeft === 1 ? "Only 1 spot left!" : `${spotsLeft} spots remaining`}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <form onSubmit={handleSignup} className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="name">Your Name</Label>
-                  <Input
-                    id="name"
-                    placeholder="Enter your name"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    required
-                  />
-                </div>
-                {error && <div className="text-red-600 text-sm">{error}</div>}
-                <Button type="submit" className="w-full" disabled={isSigningUp}>
-                  {isSigningUp ? "Signing Up..." : "I'm In!"}
-                </Button>
-              </form>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Full Event Notice */}
-        {isFull && (
-          <Card className="shadow-lg mb-6 border-orange-200 bg-orange-50">
-            <CardContent className="pt-6 text-center">
-              <Badge variant="secondary" className="mb-2">
-                Event Full
-              </Badge>
-              <p className="text-gray-600">This event has reached its maximum capacity.</p>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Signups List */}
-        <Card className="shadow-lg">
+        <Card className="shadow-lg mb-6">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Users className="h-5 w-5" />
-              Who's Coming ({event.signups.length})
+              <UserPlus className="h-5 w-5" />
+              Sign Up
             </CardTitle>
+            <CardDescription>
+              {!isFull ? (
+                spotsLeft === 1 ? "Only 1 spot left!" : `${spotsLeft} spots remaining`
+              ) : (
+                "Event is full - you'll be added to the waitlist"
+              )}
+            </CardDescription>
           </CardHeader>
           <CardContent>
-            {event.signups.length === 0 ? (
-              <p className="text-gray-500 text-center py-4">No signups yet. Be the first!</p>
-            ) : (
+            <form onSubmit={handleSignup} className="space-y-4">
               <div className="space-y-2">
-                {event.signups.map((signup, index) => (
-                  <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                    <div className="flex items-center gap-3">
-                      <span className="font-medium">{signup}</span>
-                      <Badge variant="outline">#{index + 1}</Badge>
+                <Label htmlFor="name">Your Name</Label>
+                <Input
+                  id="name"
+                  placeholder="Enter your name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  required
+                />
+              </div>
+              {error && <div className="text-red-600 text-sm">{error}</div>}
+              <Button type="submit" className="w-full" disabled={isSigningUp}>
+                {isSigningUp ? "Signing Up..." : isFull ? "Join Waitlist" : "I'm In!"}
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+
+        {/* Confirmed Signups */}
+        {confirmedSignups.length > 0 && (
+          <Card className="shadow-lg mb-6">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Users className="h-5 w-5" />
+                Confirmed Attendees ({confirmedSignups.length})
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {confirmedSignups.map((signup, index) => (
+                  <div key={index} className="flex items-center justify-between p-3 bg-green-50 border border-green-200 rounded-lg">
+                    <div className="flex flex-col gap-1">
+                      <div className="flex items-center gap-3">
+                        <span className="font-medium">{signup.name}</span>
+                        <Badge variant="default">#{index + 1}</Badge>
+                      </div>
+                      <div className="flex items-center gap-1 text-xs text-gray-500">
+                        <Clock className="h-3 w-3" />
+                        <span>Signed up {formatSignupTime(signup.timestamp)}</span>
+                      </div>
                     </div>
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => handleRemove(signup)}
-                      disabled={removingNames.has(signup)}
+                      onClick={() => handleRemove(signup.name)}
+                      disabled={removingNames.has(signup.name)}
                       className="text-red-600 hover:text-red-700 hover:bg-red-50"
                     >
-                      {removingNames.has(signup) ? (
+                      {removingNames.has(signup.name) ? (
                         "Removing..."
                       ) : (
                         <X className="h-4 w-4" />
@@ -209,9 +228,65 @@ export function EventPageClient({ event: initialEvent }: EventPageClientProps) {
                   </div>
                 ))}
               </div>
-            )}
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Waitlisted Signups */}
+        {waitlistedSignups.length > 0 && (
+          <Card className="shadow-lg mb-6">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Clock className="h-5 w-5" />
+                Waitlist ({waitlistedSignups.length})
+              </CardTitle>
+              <CardDescription>
+                People on the waitlist will be automatically moved to confirmed if spots become available
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {waitlistedSignups.map((signup, index) => (
+                  <div key={index + event.maxSignups} className="flex items-center justify-between p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                    <div className="flex flex-col gap-1">
+                      <div className="flex items-center gap-3">
+                        <span className="font-medium text-amber-800">{signup.name}</span>
+                        <Badge variant="secondary">Waitlist #{index + 1}</Badge>
+                      </div>
+                      <div className="flex items-center gap-1 text-xs text-amber-600">
+                        <Clock className="h-3 w-3" />
+                        <span>Joined waitlist {formatSignupTime(signup.timestamp)}</span>
+                      </div>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleRemove(signup.name)}
+                      disabled={removingNames.has(signup.name)}
+                      className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                    >
+                      {removingNames.has(signup.name) ? (
+                        "Removing..."
+                      ) : (
+                        <X className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Empty State */}
+        {event.signups.length === 0 && (
+          <Card className="shadow-lg">
+            <CardContent className="text-center py-8">
+              <Users className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+              <p className="text-gray-500">No signups yet. Be the first!</p>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Share Section */}
         {/* <Card className="shadow-lg mt-6">

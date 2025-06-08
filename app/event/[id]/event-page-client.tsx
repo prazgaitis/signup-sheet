@@ -1,16 +1,17 @@
 "use client"
 
 import type React from "react"
-import { useState } from "react"
+import { useState, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
-import { CalendarDays, Users, Share2, Copy, Check, ArrowLeft, X, Clock, UserPlus, Trash2, MoreVertical } from "lucide-react"
+import { CalendarDays, Users, Share2, Copy, Check, ArrowLeft, X, Clock, UserPlus, Trash2, MoreVertical, Wifi } from "lucide-react"
 import { addSignup, removeSignup, deleteEvent } from "@/app/actions"
 import type { Event, Signup } from "@/lib/redis"
 import Link from "next/link"
+import { useEventSSE } from "@/hooks/useEventSSE"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -41,6 +42,20 @@ export function EventPageClient({ event: initialEvent }: EventPageClientProps) {
   const [error, setError] = useState("")
   const [isDeleting, setIsDeleting] = useState(false)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [isConnected, setIsConnected] = useState(false)
+
+  // Handle real-time updates from SSE
+  const handleEventUpdate = useCallback((updatedEvent: Event) => {
+    setEvent(updatedEvent)
+  }, [])
+
+  // Set up SSE connection for real-time updates
+  useEventSSE({
+    eventId: event.id,
+    onEventUpdate: handleEventUpdate,
+    onConnectionChange: setIsConnected,
+    enabled: true
+  })
 
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -50,20 +65,8 @@ export function EventPageClient({ event: initialEvent }: EventPageClientProps) {
     setError("")
 
     try {
-      // Perform the actual signup
+      // Perform the actual signup - SSE will handle the state update
       await addSignup(event.id, name.trim())
-
-      // Update the local state after successful signup
-      const newSignup: Signup = {
-        name: name.trim(),
-        timestamp: new Date().toISOString()
-      }
-
-      setEvent(prevEvent => ({
-        ...prevEvent,
-        signups: [...prevEvent.signups, newSignup],
-      }))
-
       setName("")
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to sign up")
@@ -77,14 +80,8 @@ export function EventPageClient({ event: initialEvent }: EventPageClientProps) {
     setError("")
 
     try {
-      // Perform the actual removal
+      // Perform the actual removal - SSE will handle the state update
       await removeSignup(event.id, nameToRemove)
-
-      // Update the local state after successful removal
-      setEvent(prevEvent => ({
-        ...prevEvent,
-        signups: prevEvent.signups.filter(signup => signup.name !== nameToRemove),
-      }))
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to remove signup")
     } finally {
@@ -193,6 +190,12 @@ export function EventPageClient({ event: initialEvent }: EventPageClientProps) {
                         + {waitlistedSignups.length} waitlisted
                       </span>
                     )}
+                  </span>
+                  <span className="flex items-center gap-1 text-xs">
+                    <Wifi className={`h-3 w-3 ${isConnected ? 'text-green-600' : 'text-gray-400'}`} />
+                    <span className={isConnected ? 'text-green-600' : 'text-gray-400'}>
+                      {isConnected ? 'Live' : 'Offline'}
+                    </span>
                   </span>
                 </CardDescription>
               </div>

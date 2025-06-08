@@ -2,6 +2,7 @@
 
 import { redis, type Event, type Signup } from "@/lib/redis"
 import { redirect } from "next/navigation"
+import { SSEManager } from "@/lib/sse"
 
 export async function createEvent(formData: FormData) {
   const title = formData.get("title") as string
@@ -79,6 +80,13 @@ export async function addSignup(eventId: string, name: string) {
   // Update event in Redis
   await redis.set(`event:${eventId}`, updatedEvent)
 
+  // Broadcast the update to all connected clients
+  SSEManager.broadcast(eventId, {
+    type: 'signup_added',
+    event: updatedEvent,
+    signup: newSignup
+  })
+
   return updatedEvent
 }
 
@@ -101,6 +109,13 @@ export async function removeSignup(eventId: string, name: string) {
 
   // Update event in Redis
   await redis.set(`event:${eventId}`, updatedEvent)
+
+  // Broadcast the update to all connected clients
+  SSEManager.broadcast(eventId, {
+    type: 'signup_removed',
+    event: updatedEvent,
+    removedName: name.trim()
+  })
 
   return updatedEvent
 }

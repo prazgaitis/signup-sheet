@@ -1,137 +1,207 @@
 "use server"
 
-import { redis, type Event, type Signup } from "@/lib/redis"
+import { supabase, type Event, type Signup } from "@/lib/supabase"
 import { redirect } from "next/navigation"
-import { SSEManager } from "@/lib/sse"
+import { generatePublicId } from "@/lib/utils"
 
 export async function createEvent(formData: FormData) {
   const title = formData.get("title") as string
   const date = formData.get("date") as string
   const maxSignups = Number(formData.get("maxSignups"))
 
-  // Generate unique short ID
-  const eventId = Math.random().toString(36).substring(2, 8)
+  let publicId = ''
+  let retries = 0
+  const maxRetries = 5
 
-  const event: Event = {
-    id: eventId,
-    title,
-    date,
-    maxSignups,
-    signups: [],
-    createdAt: new Date().toISOString(),
+  // Try to insert with a unique public_id, retry if it already exists
+  while (retries < maxRetries) {
+    publicId = generatePublicId()
+    
+    const event: Omit<Event, 'id' | 'created_at'> = {
+      public_id: publicId,
+      title,
+      date,
+      max_signups: maxSignups,
+    }
+
+    // Store event in Supabase
+    const { error } = await supabase
+      .from('events')
+      .insert(event)
+
+    if (!error) {
+      // Success!
+      break
+    } else if (error.code === '23505' && error.message.includes('public_id')) {
+      // Unique constraint violation on public_id, try again
+      retries++
+      continue
+    } else {
+      // Some other error
+      throw new Error(`Failed to create event: ${error.message}`)
+    }
   }
 
-  // Store event in Redis
-  await redis.set(`event:${eventId}`, event)
+  if (retries >= maxRetries) {
+    throw new Error('Failed to generate unique event ID after multiple attempts')
+  }
 
-  // Also add to events list for potential future listing
-  await redis.sadd("events", eventId)
-
-  redirect(`/event/${eventId}`)
+  redirect(`/event/${publicId}`)
 }
 
-export async function getEvent(eventId: string): Promise<Event | null> {
-  const event = await redis.get(`event:${eventId}`)
-  return event as Event | null
+export async function getEvent(publicId: string): Promise<Event & { signups: Signup[] } | null> {
+  // Get event with signups using public_id
+  const { data: event, error } = await supabase
+    .from('events')
+    .select(`
+      *,
+      signups (*)
+    `)
+    .eq('public_id', publicId)
+    .single()
+
+  if (error || !event) {
+    return null
+  }
+
+  return {
+    ...event,
+    signups: event.signups || []
+  }
 }
 
 export async function getAllEvents(): Promise<Event[]> {
-  // Get all event IDs from the events set
-  const eventIds = await redis.smembers("events")
-  
-  if (!eventIds || eventIds.length === 0) {
+  // Get all events
+  const { data: events, error } = await supabase
+    .from('events')
+    .select('*')
+    .order('created_at', { ascending: false })
+
+  if (error || !events) {
     return []
   }
 
-  // Get all events in parallel
-  const eventPromises = eventIds.map(id => redis.get(`event:${id}`))
-  const events = await Promise.all(eventPromises)
-  
-  // Filter out null values and ensure type safety
-  const validEvents = events.filter((event): event is Event => event !== null)
-  
-  // Sort by creation date (newest first)
-  return validEvents.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+  return events
 }
 
-export async function addSignup(eventId: string, name: string) {
-  const event = await getEvent(eventId)
+export async function addSignup(publicId: string, name: string) {
+  // First check if the event exists and get current signup count
+  const { data: event, error: eventError } = await supabase
+    .from('events')
+    .select(`
+      *,
+      signups (*)
+    `)
+    .eq('public_id', publicId)
+    .single()
 
-  if (!event) {
+  if (eventError || !event) {
     throw new Error("Event not found")
   }
 
-  if (event.signups.some(signup => signup.name === name.trim())) {
+  // Check if name already exists (case-insensitive)
+  const trimmedName = name.trim()
+  const existingSignup = event.signups.find((s: Signup) => 
+    s.name.toLowerCase() === trimmedName.toLowerCase()
+  )
+  if (existingSignup) {
     throw new Error("Name already signed up")
   }
 
-  // Create new signup with timestamp
-  const newSignup: Signup = {
-    name: name.trim(),
-    timestamp: new Date().toISOString()
+  // Add signup using the event's actual ID
+  const { error: signupError } = await supabase
+    .from('signups')
+    .insert({
+      event_id: event.id,
+      name: trimmedName
+    })
+
+  if (signupError) {
+    // Handle unique constraint violation gracefully
+    if (signupError.code === '23505') {
+      throw new Error("Name already signed up")
+    }
+    throw new Error(`Failed to add signup: ${signupError.message}`)
   }
 
-  // Add signup to event
-  const updatedEvent = {
-    ...event,
-    signups: [...event.signups, newSignup],
-  }
-
-  // Update event in Redis
-  await redis.set(`event:${eventId}`, updatedEvent)
-
-  // Broadcast the update to all connected clients
-  SSEManager.broadcast(eventId, {
-    type: 'signup_added',
-    event: updatedEvent,
-    signup: newSignup
-  })
-
-  return updatedEvent
+  // Return updated event
+  return getEvent(publicId)
 }
 
-export async function removeSignup(eventId: string, name: string) {
-  const event = await getEvent(eventId)
+export async function removeSignup(publicId: string, name: string) {
+  console.log(`Attempting to remove signup: ${name} from event: ${publicId}`)
+  
+  // First get the event to find its ID
+  const { data: event, error: eventError } = await supabase
+    .from('events')
+    .select('id')
+    .eq('public_id', publicId)
+    .single()
 
-  if (!event) {
+  if (eventError || !event) {
+    console.error('Event not found:', eventError)
     throw new Error("Event not found")
   }
 
-  if (!event.signups.some(signup => signup.name === name.trim())) {
+  console.log(`Found event with ID: ${event.id}`)
+
+  const trimmedName = name.trim()
+
+  // Check if the signup exists (using case-insensitive search)
+  const { data: signup, error: findError } = await supabase
+    .from('signups')
+    .select('*')
+    .eq('event_id', event.id)
+    .ilike('name', trimmedName)
+    .single()
+
+  if (findError || !signup) {
+    console.error('Signup not found:', findError)
     throw new Error("Name not found in signup list")
   }
 
-  // Remove signup from event
-  const updatedEvent = {
-    ...event,
-    signups: event.signups.filter(signup => signup.name !== name.trim()),
+  console.log(`Found signup to delete:`, signup)
+
+  // Remove signup using the actual name from the database
+  const { error: deleteError } = await supabase
+    .from('signups')
+    .delete()
+    .eq('id', signup.id)
+
+  if (deleteError) {
+    console.error('Delete failed:', deleteError)
+    throw new Error(`Failed to remove signup: ${deleteError.message}`)
   }
 
-  // Update event in Redis
-  await redis.set(`event:${eventId}`, updatedEvent)
+  console.log(`Successfully deleted signup with ID: ${signup.id}`)
 
-  // Broadcast the update to all connected clients
-  SSEManager.broadcast(eventId, {
-    type: 'signup_removed',
-    event: updatedEvent,
-    removedName: name.trim()
-  })
-
+  // Return updated event
+  const updatedEvent = await getEvent(publicId)
+  console.log(`Returning updated event:`, updatedEvent)
   return updatedEvent
 }
 
-export async function deleteEvent(eventId: string) {
-  const event = await getEvent(eventId)
+export async function deleteEvent(publicId: string) {
+  // Check if event exists
+  const { data: event, error: findError } = await supabase
+    .from('events')
+    .select('*')
+    .eq('public_id', publicId)
+    .single()
 
-  if (!event) {
+  if (findError || !event) {
     throw new Error("Event not found")
   }
 
-  // Remove event from Redis
-  await redis.del(`event:${eventId}`)
-  
-  // Remove event ID from events set
-  await redis.srem("events", eventId)
+  // Delete event (cascades to signups)
+  const { error: deleteError } = await supabase
+    .from('events')
+    .delete()
+    .eq('public_id', publicId)
+
+  if (deleteError) {
+    throw new Error(`Failed to delete event: ${deleteError.message}`)
+  }
 
   redirect("/events")
 }

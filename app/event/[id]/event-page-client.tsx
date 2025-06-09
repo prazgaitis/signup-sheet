@@ -9,9 +9,9 @@ import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { CalendarDays, Users, Share2, Copy, Check, ArrowLeft, X, Clock, UserPlus, Trash2, MoreVertical, Wifi } from "lucide-react"
 import { addSignup, removeSignup, deleteEvent } from "@/app/actions"
-import type { Event, Signup } from "@/lib/redis"
+import type { Event, Signup } from "@/lib/supabase"
 import Link from "next/link"
-import { useEventSSE } from "@/hooks/useEventSSE"
+import { useSupabaseRealtime } from "@/hooks/useSupabaseRealtime"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -30,7 +30,7 @@ import {
 } from "@/components/ui/alert-dialog"
 
 interface EventPageClientProps {
-  event: Event
+  event: Event & { signups: Signup[] }
 }
 
 export function EventPageClient({ event: initialEvent }: EventPageClientProps) {
@@ -44,14 +44,22 @@ export function EventPageClient({ event: initialEvent }: EventPageClientProps) {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [isConnected, setIsConnected] = useState(false)
 
-  // Handle real-time updates from SSE
-  const handleEventUpdate = useCallback((updatedEvent: Event) => {
-    setEvent(updatedEvent)
+  // Handle real-time updates from Supabase
+  const handleEventUpdate = useCallback((updatedEvent: Event & { signups: Signup[] }) => {
+    // Sort signups by timestamp before updating state
+    const sortedEvent = {
+      ...updatedEvent,
+      signups: [...updatedEvent.signups].sort((a, b) => 
+        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+      )
+    }
+    setEvent(sortedEvent)
   }, [])
 
-  // Set up SSE connection for real-time updates
-  useEventSSE({
-    eventId: event.id,
+  // Set up Supabase Realtime connection for real-time updates
+  useSupabaseRealtime({
+    publicId: event.public_id,
+    initialEvent: event,
     onEventUpdate: handleEventUpdate,
     onConnectionChange: setIsConnected,
     enabled: true
@@ -65,8 +73,8 @@ export function EventPageClient({ event: initialEvent }: EventPageClientProps) {
     setError("")
 
     try {
-      // Perform the actual signup - SSE will handle the state update
-      await addSignup(event.id, name.trim())
+      // Perform the actual signup - Supabase Realtime will handle the state update
+      await addSignup(event.public_id, name.trim())
       setName("")
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to sign up")
@@ -80,8 +88,8 @@ export function EventPageClient({ event: initialEvent }: EventPageClientProps) {
     setError("")
 
     try {
-      // Perform the actual removal - SSE will handle the state update
-      await removeSignup(event.id, nameToRemove)
+      // Perform the actual removal - Supabase Realtime will handle the state update
+      await removeSignup(event.public_id, nameToRemove)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to remove signup")
     } finally {
@@ -105,7 +113,7 @@ export function EventPageClient({ event: initialEvent }: EventPageClientProps) {
     setError("")
 
     try {
-      await deleteEvent(event.id)
+      await deleteEvent(event.public_id)
       // The deleteEvent action will redirect to /events, so we don't need to do anything else here
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete event")
@@ -134,11 +142,14 @@ export function EventPageClient({ event: initialEvent }: EventPageClientProps) {
     })
   }
 
-  // Split signups into confirmed and waitlisted
-  const confirmedSignups = event.signups.slice(0, event.maxSignups)
-  const waitlistedSignups = event.signups.slice(event.maxSignups)
-  const isFull = confirmedSignups.length >= event.maxSignups
-  const spotsLeft = event.maxSignups - confirmedSignups.length
+  // Sort signups by timestamp and split into confirmed and waitlisted
+  const sortedSignups = [...event.signups].sort((a, b) => 
+    new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+  )
+  const confirmedSignups = sortedSignups.slice(0, event.max_signups)
+  const waitlistedSignups = sortedSignups.slice(event.max_signups)
+  const isFull = confirmedSignups.length >= event.max_signups
+  const spotsLeft = event.max_signups - confirmedSignups.length
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
@@ -184,7 +195,7 @@ export function EventPageClient({ event: initialEvent }: EventPageClientProps) {
                   </span>
                   <span className="flex items-center gap-1">
                     <Users className="h-4 w-4" />
-                    {confirmedSignups.length}/{event.maxSignups} confirmed
+                    {confirmedSignups.length}/{event.max_signups} confirmed
                     {waitlistedSignups.length > 0 && (
                       <span className="text-amber-600">
                         + {waitlistedSignups.length} waitlisted
@@ -351,7 +362,7 @@ export function EventPageClient({ event: initialEvent }: EventPageClientProps) {
             <CardContent>
               <div className="space-y-2">
                 {waitlistedSignups.map((signup, index) => (
-                  <div key={index + event.maxSignups} className="flex items-center justify-between p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                  <div key={index + event.max_signups} className="flex items-center justify-between p-3 bg-amber-50 border border-amber-200 rounded-lg">
                     <div className="flex flex-col gap-1">
                       <div className="flex items-center gap-3">
                         <span className="font-medium text-amber-800">{signup.name}</span>

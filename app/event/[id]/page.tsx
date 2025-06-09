@@ -19,7 +19,7 @@ export async function generateMetadata({ params }: EventPageProps): Promise<Meta
 
   return {
     title: `${event.title} - ${new Date(event.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`,
-    description: `Join ${event.title} - ${event.signups.length}/${event.maxSignups} people signed up. Event date: ${new Date(event.date).toLocaleDateString()}`
+    description: `Join ${event.title} - ${event.signups.length}/${event.max_signups} people signed up. Event date: ${new Date(event.date).toLocaleDateString()}`
   }
 }
 

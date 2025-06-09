@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge"
 import { CalendarDays, Users, Clock, ArrowRight, Plus } from "lucide-react"
 import Link from "next/link"
-import type { Event } from "@/lib/redis"
+import type { Event } from "@/lib/supabase"
 
 interface EventsPageClientProps {
   events: Event[]
@@ -21,18 +21,11 @@ export function EventsPageClient({ events }: EventsPageClientProps) {
   }
 
   const getStatusBadge = (event: Event) => {
-    const confirmedCount = Math.min(event.signups.length, event.maxSignups)
-    const waitlistCount = Math.max(0, event.signups.length - event.maxSignups)
-    
-    if (confirmedCount === event.maxSignups && waitlistCount > 0) {
-      return <Badge variant="secondary">Full + Waitlist</Badge>
-    } else if (confirmedCount === event.maxSignups) {
-      return <Badge variant="destructive">Full</Badge>
-    } else if (event.maxSignups - confirmedCount <= 3) {
-      return <Badge variant="secondary">Few spots left</Badge>
-    } else {
-      return <Badge variant="default">Open</Badge>
+    const isUpcoming = new Date(event.date) > new Date()
+    if (!isUpcoming) {
+      return <Badge variant="secondary">Past Event</Badge>
     }
+    return <Badge variant="default">Open</Badge>
   }
 
   return (
@@ -65,9 +58,6 @@ export function EventsPageClient({ events }: EventsPageClientProps) {
         ) : (
           <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
             {events.map((event) => {
-              const confirmedCount = Math.min(event.signups.length, event.maxSignups)
-              const waitlistCount = Math.max(0, event.signups.length - event.maxSignups)
-              
               return (
                 <Card key={event.id} className="shadow-lg hover:shadow-xl transition-shadow">
                   <CardHeader>
@@ -90,35 +80,21 @@ export function EventsPageClient({ events }: EventsPageClientProps) {
                           <div className="flex items-center gap-1">
                             <Users className="h-4 w-4 text-gray-500" />
                             <span className="text-gray-600">
-                              {confirmedCount} / {event.maxSignups} confirmed
+                              Max {event.max_signups} attendees
                             </span>
                           </div>
-                          {waitlistCount > 0 && (
-                            <span className="text-xs text-amber-600 ml-5">
-                              + {waitlistCount} waitlisted
-                            </span>
-                          )}
                         </div>
-                      </div>
-                      
-                      <div className="w-full bg-gray-200 rounded-full h-2">
-                        <div 
-                          className="bg-blue-600 h-2 rounded-full transition-all"
-                          style={{ 
-                            width: `${Math.min((confirmedCount / event.maxSignups) * 100, 100)}%` 
-                          }}
-                        />
                       </div>
 
                       <div className="flex items-center gap-1 text-xs text-gray-500">
                         <Clock className="h-3 w-3" />
                         Created {new Intl.RelativeTimeFormat('en', { numeric: 'auto' }).format(
-                          Math.floor((new Date(event.createdAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24)),
+                          Math.floor((new Date(event.created_at).getTime() - Date.now()) / (1000 * 60 * 60 * 24)),
                           'day'
                         )}
                       </div>
 
-                      <Link href={`/event/${event.id}`} className="block w-full">
+                      <Link href={`/event/${event.public_id}`} className="block w-full">
                         <Button variant="outline" className="w-full flex items-center gap-2">
                           View Event
                           <ArrowRight className="h-4 w-4" />

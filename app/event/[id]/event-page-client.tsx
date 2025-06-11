@@ -1,7 +1,7 @@
 "use client"
 
-import type React from "react"
-import { useState, useCallback } from "react"
+import type { FormEvent } from "react"
+import { useState, useCallback, useMemo } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -29,6 +29,11 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 
+const sortSignups = (signups: Signup[]) =>
+  [...signups].sort(
+    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+  )
+
 interface EventPageClientProps {
   event: Event & { signups: Signup[] }
 }
@@ -45,16 +50,12 @@ export function EventPageClient({ event: initialEvent }: EventPageClientProps) {
   const [isConnected, setIsConnected] = useState(false)
 
   // Handle real-time updates from Supabase
-  const handleEventUpdate = useCallback((updatedEvent: Event & { signups: Signup[] }) => {
-    // Sort signups by timestamp before updating state
-    const sortedEvent = {
-      ...updatedEvent,
-      signups: [...updatedEvent.signups].sort((a, b) => 
-        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-      )
-    }
-    setEvent(sortedEvent)
-  }, [])
+  const handleEventUpdate = useCallback(
+    (updatedEvent: Event & { signups: Signup[] }) => {
+      setEvent({ ...updatedEvent, signups: sortSignups(updatedEvent.signups) })
+    },
+    []
+  )
 
   // Set up Supabase Realtime connection for real-time updates
   useSupabaseRealtime({
@@ -65,89 +66,101 @@ export function EventPageClient({ event: initialEvent }: EventPageClientProps) {
     enabled: true
   })
 
-  const handleSignup = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!name.trim()) return
+  const handleSignup = useCallback(
+    async (e: FormEvent<HTMLFormElement>) => {
+      e.preventDefault()
+      const trimmed = name.trim()
+      if (!trimmed) return
 
-    setIsSigningUp(true)
-    setError("")
+      setIsSigningUp(true)
+      setError("")
 
-    try {
-      // Perform the actual signup - Supabase Realtime will handle the state update
-      await addSignup(event.public_id, name.trim())
-      setName("")
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to sign up")
-    } finally {
-      setIsSigningUp(false)
-    }
-  }
+      try {
+        const updatedEvent = await addSignup(event.public_id, trimmed)
+        if (updatedEvent) {
+          handleEventUpdate(updatedEvent)
+        }
+        setName("")
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to sign up")
+      } finally {
+        setIsSigningUp(false)
+      }
+    },
+    [name, event.public_id, handleEventUpdate]
+  )
 
-  const handleRemove = async (nameToRemove: string) => {
-    setRemovingNames(prev => new Set(prev).add(nameToRemove))
-    setError("")
+  const handleRemove = useCallback(
+    async (nameToRemove: string) => {
+      setRemovingNames((prev) => new Set(prev).add(nameToRemove))
+      setError("")
 
-    try {
-      // Perform the actual removal - Supabase Realtime will handle the state update
-      await removeSignup(event.public_id, nameToRemove)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to remove signup")
-    } finally {
-      setRemovingNames(prev => {
-        const newSet = new Set(prev)
-        newSet.delete(nameToRemove)
-        return newSet
-      })
-    }
-  }
+      try {
+        const updatedEvent = await removeSignup(event.public_id, nameToRemove)
+        if (updatedEvent) {
+          handleEventUpdate(updatedEvent)
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to remove signup")
+      } finally {
+        setRemovingNames((prev) => {
+          const newSet = new Set(prev)
+          newSet.delete(nameToRemove)
+          return newSet
+        })
+      }
+    },
+    [event.public_id, handleEventUpdate]
+  )
 
-  const copyLink = async () => {
-    const url = window.location.href
-    await navigator.clipboard.writeText(url)
+  const copyLink = useCallback(async () => {
+    await navigator.clipboard.writeText(window.location.href)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
-  }
+  }, [])
 
-  const handleDeleteEvent = async () => {
+  const handleDeleteEvent = useCallback(async () => {
     setIsDeleting(true)
     setError("")
 
     try {
       await deleteEvent(event.public_id)
-      // The deleteEvent action will redirect to /events, so we don't need to do anything else here
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete event")
       setIsDeleting(false)
       setShowDeleteDialog(false)
     }
-  }
+  }, [event.public_id])
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleString("en-US", {
+  const formatDate = useCallback((dateString: string) => {
+    return new Intl.DateTimeFormat("en-US", {
       weekday: "long",
       year: "numeric",
       month: "long",
       day: "numeric",
       hour: "numeric",
       minute: "2-digit",
-    })
-  }
+    }).format(new Date(dateString))
+  }, [])
 
-  const formatSignupTime = (timestamp: string) => {
-    return new Date(timestamp).toLocaleString("en-US", {
+  const formatSignupTime = useCallback((timestamp: string) => {
+    return new Intl.DateTimeFormat("en-US", {
       month: "short",
       day: "numeric",
       hour: "numeric",
       minute: "2-digit",
-    })
-  }
+    }).format(new Date(timestamp))
+  }, [])
 
-  // Sort signups by timestamp and split into confirmed and waitlisted
-  const sortedSignups = [...event.signups].sort((a, b) => 
-    new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+  const sortedSignups = useMemo(() => sortSignups(event.signups), [event.signups])
+  const confirmedSignups = useMemo(
+    () => sortedSignups.slice(0, event.max_signups),
+    [sortedSignups, event.max_signups]
   )
-  const confirmedSignups = sortedSignups.slice(0, event.max_signups)
-  const waitlistedSignups = sortedSignups.slice(event.max_signups)
+  const waitlistedSignups = useMemo(
+    () => sortedSignups.slice(event.max_signups),
+    [sortedSignups, event.max_signups]
+  )
   const isFull = confirmedSignups.length >= event.max_signups
   const spotsLeft = event.max_signups - confirmedSignups.length
 
